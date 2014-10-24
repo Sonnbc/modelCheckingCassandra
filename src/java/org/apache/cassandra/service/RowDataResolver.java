@@ -19,13 +19,20 @@ package org.apache.cassandra.service;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 
-import com.google.common.collect.Iterables;
-
-import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.Column;
+import org.apache.cassandra.db.ColumnFamily;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.IColumn;
+import org.apache.cassandra.db.ReadResponse;
+import org.apache.cassandra.db.Row;
+import org.apache.cassandra.db.RowMutation;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.QueryFilter;
@@ -36,17 +43,27 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.CloseableIterator;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.pig.impl.util.Pair;
+
+import com.google.common.collect.Iterables;
 
 public class RowDataResolver extends AbstractRowResolver
 {
     private int maxLiveCount = 0;
     public List<IAsyncResult> repairResults = Collections.emptyList();
     private final IDiskAtomFilter filter;
+    private int consistency_level = 0;
 
     public RowDataResolver(String table, ByteBuffer key, IDiskAtomFilter qFilter)
     {
         super(key, table);
         this.filter = qFilter;
+    }
+
+    public RowDataResolver(String table, ByteBuffer key, IDiskAtomFilter qFilter, int consistency)
+    {
+        this(table, key, qFilter);
+        consistency_level = consistency;
     }
 
     /*
@@ -56,6 +73,7 @@ public class RowDataResolver extends AbstractRowResolver
     * as full data reads.  In this case we need to compute the most recent version
     * of each column, and send diffs to out-of-date replicas.
     */
+    @Override
     public Row resolve() throws DigestMismatchException
     {
         if (logger.isDebugEnabled())
@@ -63,6 +81,7 @@ public class RowDataResolver extends AbstractRowResolver
         long startTime = System.currentTimeMillis();
 
         ColumnFamily resolved;
+        boolean isMismatched = false;
         if (replies.size() > 1)
         {
             List<ColumnFamily> versions = new ArrayList<ColumnFamily>(replies.size());
@@ -82,7 +101,9 @@ public class RowDataResolver extends AbstractRowResolver
                     maxLiveCount = liveCount;
             }
 
-            resolved = resolveSuperset(versions);
+            Pair<ColumnFamily, Boolean> pair = resolveSupersetNew(versions);
+            resolved = pair.first;
+            isMismatched = pair.second;
             if (logger.isDebugEnabled())
                 logger.debug("versions merged");
 
@@ -99,7 +120,80 @@ public class RowDataResolver extends AbstractRowResolver
         if (logger.isDebugEnabled())
             logger.debug("resolve: " + (System.currentTimeMillis() - startTime) + " ms.");
 
+        appendMismatchInfo(key, resolved, isMismatched);
         return new Row(key, resolved);
+    }
+
+    private static void appendMismatchInfo(DecoratedKey key, ColumnFamily cf, boolean isMismatched)
+    {
+        String keystr = new String(key.key.array(), Charset.forName("UTF-8"));
+        if (keystr.contains("user") && (!keystr.equals("usertable"))) {
+            String status = isMismatched ? "Mismatched" : "Good";
+            ByteBuffer field = ByteBuffer.wrap("zextra".getBytes(Charset.forName("UTF-8")));
+            ByteBuffer value = ByteBuffer.wrap(status.getBytes(Charset.forName("UTF-8")));
+            Column c = new Column(field, value);
+            cf.addColumn(null, c);
+        }
+    }
+
+    Pair<ColumnFamily,Boolean> resolveSupersetNew(List<ColumnFamily> versions)
+    {
+        assert Iterables.size(versions) > 0;
+
+        ColumnFamily resolved = null;
+
+        HashMap<Integer, ArrayList<Integer>> map = new HashMap<Integer, ArrayList<Integer>>();
+        boolean isMismatched = true;
+        int pickedIdx = -1;
+        for (int i = 0; i < versions.size(); i++)
+        {
+            ColumnFamily cf = versions.get(i);
+            if (cf == null) {
+                continue;
+            }
+            int key = cf.hashCode();
+            if (!map.containsKey(key)) {
+                map.put(key, new ArrayList<Integer>());
+            }
+            map.get(key).add(i);
+            if (map.get(key).size() >= consistency_level)
+            {
+                pickedIdx = map.get(key).get(0);
+                resolved = versions.get(pickedIdx).cloneMeShallow();
+                isMismatched = false;
+            }
+        }
+
+        for (int i = 0; i < versions.size(); i++)
+        {
+            if (i == pickedIdx) {
+                continue;
+            }
+            ColumnFamily cf = versions.get(i);
+            if (cf == null) {
+                continue;
+            }
+            if (resolved == null)
+                resolved = cf.cloneMeShallow();
+            else
+                resolved.delete(cf);
+        }
+        if (resolved == null)
+            return new Pair<ColumnFamily, Boolean>(null,isMismatched);
+
+        // mimic the collectCollatedColumn + removeDeleted path that getColumnFamily takes.
+        // this will handle removing columns and subcolumns that are supressed by a row or
+        // supercolumn tombstone.
+        QueryFilter filter = new QueryFilter(null, new QueryPath(resolved.metadata().cfName), new IdentityQueryFilter());
+        List<CloseableIterator<IColumn>> iters = new ArrayList<CloseableIterator<IColumn>>();
+        for (ColumnFamily version : versions)
+        {
+            if (version == null)
+                continue;
+            iters.add(FBUtilities.closeableIterator(version.iterator()));
+        }
+        filter.collateColumns(resolved, iters, Integer.MIN_VALUE);
+        return new Pair<ColumnFamily, Boolean>(ColumnFamilyStore.removeDeleted(resolved, Integer.MIN_VALUE), isMismatched);
     }
 
     /**
@@ -162,11 +256,13 @@ public class RowDataResolver extends AbstractRowResolver
         return ColumnFamilyStore.removeDeleted(resolved, Integer.MIN_VALUE);
     }
 
+    @Override
     public Row getData()
     {
         return replies.iterator().next().payload.row();
     }
 
+    @Override
     public boolean isDataPresent()
     {
         return !replies.isEmpty();
