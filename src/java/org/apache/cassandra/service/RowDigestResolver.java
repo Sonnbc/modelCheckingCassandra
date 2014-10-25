@@ -109,6 +109,7 @@ public class RowDigestResolver extends AbstractRowResolver
 
         if (logger.isDebugEnabled())
             logger.debug("resolve: " + (System.currentTimeMillis() - startTime) + " ms.");
+        appendMismatchInfo(key, data, false);
         return new Row(key, data);
     }
 
