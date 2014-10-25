@@ -19,13 +19,11 @@ package org.apache.cassandra.service;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
-import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
@@ -122,18 +120,6 @@ public class RowDataResolver extends AbstractRowResolver
 
         appendMismatchInfo(key, resolved, isMismatched);
         return new Row(key, resolved);
-    }
-
-    private static void appendMismatchInfo(DecoratedKey key, ColumnFamily cf, boolean isMismatched)
-    {
-        String keystr = new String(key.key.array(), Charset.forName("UTF-8"));
-        if (keystr.contains("user") && (!keystr.equals("usertable"))) {
-            String status = isMismatched ? "Mismatched" : "Good";
-            ByteBuffer field = ByteBuffer.wrap("zextra".getBytes(Charset.forName("UTF-8")));
-            ByteBuffer value = ByteBuffer.wrap(status.getBytes(Charset.forName("UTF-8")));
-            Column c = new Column(field, value);
-            cf.addColumn(null, c);
-        }
     }
 
     Pair<ColumnFamily,Boolean> resolveSupersetNew(List<ColumnFamily> versions)
@@ -259,7 +245,9 @@ public class RowDataResolver extends AbstractRowResolver
     @Override
     public Row getData()
     {
-        return replies.iterator().next().payload.row();
+        Row row = replies.iterator().next().payload.row();
+        appendMismatchInfo(key, row.cf, false);
+        return row;
     }
 
     @Override

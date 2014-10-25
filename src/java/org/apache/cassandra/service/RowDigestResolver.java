@@ -39,8 +39,11 @@ public class RowDigestResolver extends AbstractRowResolver
         for (MessageIn<ReadResponse> message : replies)
         {
             ReadResponse result = message.payload;
-            if (!result.isDigestQuery())
+            if (!result.isDigestQuery()) {
+                Row row = result.row();
+                appendMismatchInfo(key, row.cf, false);
                 return result.row();
+            }
         }
 
         throw new AssertionError("getData should not be invoked when no data is present");

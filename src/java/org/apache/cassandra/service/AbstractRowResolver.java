@@ -18,16 +18,18 @@
 package org.apache.cassandra.service;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.Set;
 
-import org.cliffc.high_scale_lib.NonBlockingHashSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import org.apache.cassandra.db.Column;
+import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.ReadResponse;
 import org.apache.cassandra.db.Row;
 import org.apache.cassandra.net.MessageIn;
+import org.cliffc.high_scale_lib.NonBlockingHashSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public abstract class AbstractRowResolver implements IResponseResolver<ReadResponse, Row>
 {
@@ -39,8 +41,22 @@ public abstract class AbstractRowResolver implements IResponseResolver<ReadRespo
 
     public AbstractRowResolver(ByteBuffer key, String table)
     {
+        //logger.debug("key = {}", new String(key.array(), Charset.forName("UTF-8")));
         this.key = StorageService.getPartitioner().decorateKey(key);
         this.table = table;
+    }
+
+    protected static void appendMismatchInfo(DecoratedKey key, ColumnFamily cf, boolean isMismatched)
+    {
+        String keystr = new String(key.key.array(), Charset.forName("UTF-8"));
+        //logger.debug("appendMismatchedInfo {}", keystr);
+        if (keystr.contains("user") && (!keystr.equals("usertable"))) {
+            String status = isMismatched ? "Mismatched" : "Good";
+            ByteBuffer field = ByteBuffer.wrap("zextra".getBytes(Charset.forName("UTF-8")));
+            ByteBuffer value = ByteBuffer.wrap(status.getBytes(Charset.forName("UTF-8")));
+            Column c = new Column(field, value);
+            cf.addColumn(null, c);
+        }
     }
 
     public void preprocess(MessageIn<ReadResponse> message)
