@@ -41,12 +41,21 @@ import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.CloseableIterator;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.pig.impl.util.Pair;
 
 import com.google.common.collect.Iterables;
-
 public class RowDataResolver extends AbstractRowResolver
 {
+    class Pair<X,Y>
+    {
+        public X x;
+        public Y y;
+        public Pair(X xx, Y yy)
+        {
+            x = xx;
+            y = yy;
+        }
+    }
+
     private int maxLiveCount = 0;
     public List<IAsyncResult> repairResults = Collections.emptyList();
     private final IDiskAtomFilter filter;
@@ -100,8 +109,8 @@ public class RowDataResolver extends AbstractRowResolver
             }
 
             Pair<ColumnFamily, Boolean> pair = resolveSupersetNew(versions);
-            resolved = pair.first;
-            isMismatched = pair.second;
+            resolved = pair.x;
+            isMismatched = pair.y;
             if (logger.isDebugEnabled())
                 logger.debug("versions merged");
 
