@@ -127,6 +127,7 @@ public class RowDataResolver extends AbstractRowResolver
         if (logger.isDebugEnabled())
             logger.debug("resolve: " + (System.currentTimeMillis() - startTime) + " ms.");
 
+        logger.debug("isMismatched " + isMismatched);
         appendMismatchInfo(key, resolved, isMismatched);
         return new Row(key, resolved);
     }
