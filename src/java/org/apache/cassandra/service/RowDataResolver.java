@@ -19,6 +19,7 @@ package org.apache.cassandra.service;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -132,6 +133,17 @@ public class RowDataResolver extends AbstractRowResolver
         return new Row(key, resolved);
     }
 
+    private String getValueFromColumnFamily(ColumnFamily cf)
+    {
+        StringBuilder builder = new StringBuilder();
+        for (IColumn column : cf.getSortedColumns())
+        {
+            String value = new String(column.value().array(), Charset.forName("UTF-8"));
+            builder.append(value);
+        }
+        return builder.toString();
+    }
+
     Pair<ColumnFamily,Boolean> resolveSupersetNew(List<ColumnFamily> versions)
     {
         assert Iterables.size(versions) > 0;
@@ -148,6 +160,8 @@ public class RowDataResolver extends AbstractRowResolver
                 continue;
             }
             int key = cf.hashCode();
+            String value = getValueFromColumnFamily(cf);
+            logger.debug("key = {}, value = {}", key, value);
             if (!map.containsKey(key)) {
                 map.put(key, new ArrayList<Integer>());
             }
