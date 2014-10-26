@@ -159,8 +159,8 @@ public class RowDataResolver extends AbstractRowResolver
             if (cf == null) {
                 continue;
             }
-            int key = cf.hashCode();
             String value = getValueFromColumnFamily(cf);
+            int key = value.hashCode();
             logger.debug("key = {}, value = {}", key, value);
             if (!map.containsKey(key)) {
                 map.put(key, new ArrayList<Integer>());
